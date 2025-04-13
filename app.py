@@ -8,8 +8,8 @@ import math
 st.set_page_config(page_title="Traffic Optimizer – Objective 2", layout="wide")
 st.title("🚦 Traffic Optimizer & Assistant - Objective 2 Simulation")
 st.markdown("""
-This simulation uses traffic signal prediction to guide a vehicle's speed with the goal of **minimizing stops**. 
-The system predicts the next light's phase, estimates the car's ETA, and suggests whether to speed up, slow down, or maintain speed based on the prediction.
+This assistant uses accurate signal prediction and vehicle ETA to suggest appropriate driving behavior.
+The goal is to **reduce red light waiting time** and help drivers **cross at green signals** when realistically possible.
 """)
 
 # -------------------- SIDEBAR --------------------
@@ -20,89 +20,79 @@ min_speed = st.sidebar.slider("Minimum Speed (km/h)", 10, 60, 10)
 driver_type = st.sidebar.selectbox("Driver Behavior", ["Cautious", "Average", "Aggressive"])
 start_sim = st.sidebar.button("▶ Start Simulation")
 
-# -------------------- DRIVER PROFILE PROBABILITY --------------------
+# -------------------- DRIVER BEHAVIOR --------------------
 driver_profiles = {
-    "Cautious": 0.9,  # 90% chance to follow advice
-    "Average": 0.7,   # 70% chance to follow advice
-    "Aggressive": 0.4 # 40% chance to follow advice
+    "Cautious": 0.9,
+    "Average": 0.7,
+    "Aggressive": 0.4
 }
-driver_follows_suggestion_prob = driver_profiles[driver_type]
+driver_prob = driver_profiles[driver_type]
 
-# -------------------- TRAFFIC LIGHT SETUP --------------------
+# -------------------- TRAFFIC LIGHTS --------------------
 signal_positions = [150, 350, 550, 750, 950]
 signal_labels = ['B', 'C', 'D', 'E', 'F']
 traffic_lights = {}
+phase_cycle = [("red", 40), ("green", 45), ("yellow", 5)]
 
-def initialize_signals():
-    for label, pos in zip(signal_labels, signal_positions):
-        phase = random.choice(['red', 'green', 'yellow'])
-        timer = 5 if phase == 'yellow' else random.randint(30, 60)
-        traffic_lights[label] = {"x": pos, "phase": phase, "timer": timer}
+# INIT
+for label, pos in zip(signal_labels, signal_positions):
+    phase = random.choice(['red', 'green', 'yellow'])
+    timer = 5 if phase == 'yellow' else random.randint(30, 60)
+    traffic_lights[label] = {
+        "x": pos,
+        "phase": phase,
+        "timer": timer,
+        "start_time": time.time()
+    }
 
-initialize_signals()
-
-# -------------------- CAR STATE --------------------
+# -------------------- SESSION STATE --------------------
 car_pos = 0.0
 car_speed = float(init_speed)
 waiting = False
 waiting_signal = None
 
-# -------------------- SESSION STATE --------------------
 if "prev_prediction" not in st.session_state:
     st.session_state.prev_prediction = None
 if "last_voice_time" not in st.session_state:
     st.session_state.last_voice_time = 0.0
-if "suggestion_history" not in st.session_state:
-    st.session_state.suggestion_history = []
 
-# -------------------- PLACEHOLDERS --------------------
 info_box = st.empty()
 road_box = st.empty()
-suggestion_box = st.empty()
 
 # -------------------- FUNCTIONS --------------------
 def update_signals():
-    for light in traffic_lights.values():
-        light["timer"] -= 1
-        if light["timer"] <= 0:
-            if light["phase"] == "red":
-                light["phase"] = "green"
-                light["timer"] = 45
-            elif light["phase"] == "green":
-                light["phase"] = "yellow"
-                light["timer"] = 5
-            elif light["phase"] == "yellow":
-                light["phase"] = "red"
-                light["timer"] = random.randint(30, 60)
+    for sig in traffic_lights.values():
+        if time.time() - sig["start_time"] >= sig["timer"]:
+            # Rotate phase
+            i = next(i for i, (ph, _) in enumerate(phase_cycle) if ph == sig["phase"])
+            next_i = (i + 1) % len(phase_cycle)
+            next_phase, duration = phase_cycle[next_i]
+            sig["phase"] = next_phase
+            sig["timer"] = duration
+            sig["start_time"] = time.time()
 
-def predict_phase(signal, eta):
-    if signal["phase"] == "red":
-        cycle = [("red", signal["timer"]), ("green", 45), ("yellow", 5)]
-    elif signal["phase"] == "green":
-        cycle = [("green", signal["timer"]), ("yellow", 5), ("red", 40)]
-    elif signal["phase"] == "yellow":
-        cycle = [("yellow", signal["timer"]), ("red", 40), ("green", 45)]
-    else:
-        return "Unknown"
-    t = eta
-    for phase_name, duration in cycle:
-        if t <= duration:
-            return phase_name
-        t -= duration
-    return cycle[-1][0]
+def predict_phase_at_arrival(signal, eta):
+    current_phase = signal["phase"]
+    elapsed = time.time() - signal["start_time"]
+    offset = elapsed + eta
+    total_cycle = sum(d for _, d in phase_cycle)
+    t = offset % total_cycle
+    accum = 0
+    for phase, duration in phase_cycle:
+        accum += duration
+        if t < accum:
+            return phase
+    return phase_cycle[-1][0]
 
 def calculate_required_speed(distance, time_left):
-    """
-    Calculate the required speed to reach the signal in time based on the remaining time and distance.
-    """
-    return (distance / time_left) * 10  # Convert speed to km/h
+    return (distance / time_left) * 10 if time_left > 0 else float('inf')
 
 # -------------------- SIMULATION LOOP --------------------
 if start_sim:
     while car_pos <= 1100:
         update_signals()
+        driver_follows = random.random() < driver_prob
 
-        # Get next upcoming signal
         next_signal = None
         for label in signal_labels:
             if traffic_lights[label]["x"] > car_pos:
@@ -119,137 +109,95 @@ if start_sim:
             sig = traffic_lights[next_signal]
             distance = sig["x"] - car_pos
             current_phase = sig["phase"]
+            eta = distance / (car_speed * 0.1) if car_speed > 0 else float('inf')
+            predicted = predict_phase_at_arrival(sig, eta)
 
-            if car_speed > 0:
-                eta = distance / (car_speed * 0.1)
-                predicted = predict_phase(sig, eta)
-            else:
-                eta = float('inf')
-                predicted = current_phase
+            if predicted == "green":
+                green_left = sig["timer"] - (time.time() - sig["start_time"])
+                req_speed = calculate_required_speed(distance, green_left)
+                if eta <= green_left and req_speed <= max_speed:
+                    suggestion = "Speed Up"
+                    if driver_follows and car_speed < max_speed:
+                        car_speed += 2
+                else:
+                    suggestion = "Maintain"
 
-            # ---------- SMART SUGGESTION LOGIC ----------
-            if predicted == "red":
-                # Check if it's possible to reach green
-                time_left_red = sig["timer"]
-                time_after_red = eta - time_left_red
-                if time_after_red > 0 and time_after_red <= 45:
-                    required_speed = calculate_required_speed(distance, time_after_red)
-                    if required_speed <= max_speed:
+            elif predicted == "red":
+                red_left = sig["timer"] - (time.time() - sig["start_time"])
+                time_after_red = eta - red_left
+                if 0 < time_after_red <= 45:
+                    req_speed = calculate_required_speed(distance, time_after_red)
+                    if req_speed <= max_speed:
                         suggestion = "Speed Up"
-                        if random.random() < driver_follows_suggestion_prob and car_speed < max_speed:
+                        if driver_follows and car_speed < max_speed:
                             car_speed += 2
-                            car_speed = min(max_speed, car_speed)
                     else:
                         suggestion = "Maintain"
                 else:
                     suggestion = "Slow Down"
-                    if random.random() < driver_follows_suggestion_prob and car_speed > min_speed:
+                    if driver_follows and car_speed > min_speed:
                         car_speed -= 2
-                        car_speed = max(min_speed, car_speed)
-
-            elif predicted == "green":
-                if car_speed < max_speed:
-                    time_left = sig["timer"]
-                    required_speed = calculate_required_speed(distance, time_left)
-                    if eta <= time_left and required_speed <= max_speed:
-                        suggestion = "Speed Up"
-                        if random.random() < driver_follows_suggestion_prob:
-                            car_speed += 2
-                            car_speed = min(max_speed, car_speed)
-                    else:
-                        suggestion = "Maintain"
-                else:
-                    suggestion = "Maintain"
 
             elif predicted == "yellow":
                 suggestion = "Slow Down"
-                if random.random() < driver_follows_suggestion_prob and car_speed > min_speed:
+                if driver_follows and car_speed > min_speed:
                     car_speed -= 2
-                    car_speed = max(min_speed, car_speed)
 
-            # ---------- STOP IF RED AND CLOSE ----------
+            # Stop logic
             if current_phase == "red" and distance <= 40:
                 suggestion = "Stop"
                 car_speed = 0
                 waiting = True
                 waiting_signal = next_signal
 
-        # Resume if waiting and signal turns green
         if waiting and waiting_signal:
             if traffic_lights[waiting_signal]["phase"] == "green":
                 waiting = False
                 car_speed = 15
 
-        # ---------- Debounced Voice Alert ----------
         now = time.time()
         if (st.session_state.prev_prediction != predicted) and (now - st.session_state.last_voice_time > 5):
-            voice_text = ""
-            if suggestion == "Speed Up":
-                voice_text = "Green signal ahead. Speed up."
-            elif suggestion == "Slow Down":
-                voice_text = "Red signal ahead. Please slow down."
-            elif suggestion == "Stop":
-                voice_text = "Stopping at red signal."
-            elif suggestion == "Maintain":
-                voice_text = "Maintain your speed."
-            components.html(
-                f"""
+            voice_text = {
+                "Speed Up": "Green signal ahead. Speed up.",
+                "Slow Down": "Red signal ahead. Please slow down.",
+                "Stop": "Stopping at red signal.",
+                "Maintain": "Maintain your speed."
+            }.get(suggestion, "")
+            if voice_text:
+                components.html(f"""
                 <script>
                 var msg = new SpeechSynthesisUtterance("{voice_text}");
                 window.speechSynthesis.cancel();
                 window.speechSynthesis.speak(msg);
                 </script>
-                """,
-                height=0
-            )
-            st.session_state.prev_prediction = predicted
-            st.session_state.last_voice_time = now
+                """, height=0)
+                st.session_state.prev_prediction = predicted
+                st.session_state.last_voice_time = now
 
-        # ---------- Move the Car ----------
         if car_speed > 0:
             car_pos += car_speed * 0.1
 
-        # ---------- Display Info ----------
         eta_str = "Waiting" if math.isinf(eta) else f"{int(eta)}s"
-        info_box.markdown(
-            f"""
-            ### 🚘 Vehicle Info  
-            - **Speed:** {int(car_speed)} km/h  
-            - **Next Signal:** {next_signal or "None"}  
-            - **Distance to Signal:** {int(distance)} px  
-            - **Current Signal Phase:** {current_phase}  
-            - **ETA to Signal:** {eta_str}  
-            - **Predicted Phase on Arrival:** {predicted}  
-            - **Suggestion:** **{suggestion}**  
-            - **Driver Action:** {"Followed" if random.random() < driver_follows_suggestion_prob else "Ignored"}
-            """
-        )
+        info_box.markdown(f"""
+        ### 🚘 Vehicle Info
+        - **Speed:** {int(car_speed)} km/h
+        - **Next Signal:** {next_signal or "None"}
+        - **Distance to Signal:** {int(distance)} px
+        - **Current Signal Phase:** {current_phase}
+        - **ETA to Signal:** {eta_str}
+        - **Predicted Phase on Arrival:** {predicted}
+        - **Suggestion:** **{suggestion}**
+        """)
 
-        # ---------- Recent Suggestion History ----------
-        st.session_state.suggestion_history.append(suggestion)
-        if len(st.session_state.suggestion_history) > 3:
-            st.session_state.suggestion_history.pop(0)
-        
-        suggestion_box.markdown("### Recent Suggestions:")
-        suggestion_box.write(" -> ".join(st.session_state.suggestion_history))
-
-        # ---------- Road Visualization ----------
         road = ["—"] * 120
         for label in signal_labels:
             idx = int(traffic_lights[label]["x"] / 10)
             phase = traffic_lights[label]["phase"]
-            road[idx] = {"red": "🟥", "green": "🟩", "yellow": "🟨"}[phase]
+            road[idx] = {"red": "🔳", "green": "🟢", "yellow": "🔶"}[phase]
         car_idx = int(car_pos / 10)
         if 0 <= car_idx < len(road):
             road[car_idx] = "🔵"
-        road_box.markdown("### 🛣️ Road View")
+        road_box.markdown("### 🚳️ Road View")
         road_box.code("".join(road))
-
-        # ---------- Signal Timers ----------
-        cols = st.columns(len(signal_labels))
-        for i, label in enumerate(signal_labels):
-            sig = traffic_lights[label]
-            with cols[i]:
-                st.metric(f"Signal {label}", value=sig["phase"].capitalize(), delta=f"{sig['timer']}s")
 
         time.sleep(1)
