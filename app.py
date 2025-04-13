@@ -63,7 +63,6 @@ road_box = st.empty()
 def update_signals():
     for sig in traffic_lights.values():
         if time.time() - sig["start_time"] >= sig["timer"]:
-            # Rotate phase
             i = next(i for i, (ph, _) in enumerate(phase_cycle) if ph == sig["phase"])
             next_i = (i + 1) % len(phase_cycle)
             next_phase, duration = phase_cycle[next_i]
@@ -72,7 +71,6 @@ def update_signals():
             sig["start_time"] = time.time()
 
 def predict_phase_at_arrival(signal, eta):
-    current_phase = signal["phase"]
     elapsed = time.time() - signal["start_time"]
     offset = elapsed + eta
     total_cycle = sum(d for _, d in phase_cycle)
@@ -143,7 +141,6 @@ if start_sim:
                 if driver_follows and car_speed > min_speed:
                     car_speed -= 2
 
-            # Stop logic
             if current_phase == "red" and distance <= 40:
                 suggestion = "Stop"
                 car_speed = 0
