@@ -4,7 +4,6 @@ import random
 import time
 import math
 from PIL import Image
-import io
 
 ##########################
 # PAGE CONFIGURATION
@@ -12,63 +11,65 @@ import io
 st.set_page_config(page_title="Traffic Optimizer & Assistant", layout="wide")
 st.title("Traffic Optimizer & Assistant")
 st.markdown("""
-This project includes two modules:
-- **Objective 1:** Traffic Sign Recognition with voice alerts.
-- **Objective 2:** Traffic Light Simulation with speed suggestions and dynamic voice alerts.
+This project demo has two modules:
+- **Objective 1:** Traffic Sign Recognition (upload image → prediction & voice alert).
+- **Objective 2:** Traffic Light Simulation & Speed Suggestions (simulate a car approaching unsynchronized signals with real-time voice alerts).
 """)
 
-# ---------------------------
-# Sidebar: Module Selection
-# ---------------------------
+##########################
+# SIDEBAR: MODULE SELECTION
+##########################
 page = st.sidebar.radio("Select Module", ["Traffic Light Simulation", "Traffic Sign Recognition"])
 
 ##########################
-# OBJECTIVE 2: TRAFFIC LIGHT SIMULATION
+# OBJECTIVE 2: TRAFFIC LIGHT SIMULATION & SPEED SUGGESTIONS
 ##########################
 if page == "Traffic Light Simulation":
     st.header("🚦 Traffic Light Simulation & Speed Suggestions")
-    st.markdown("This simulation predicts upcoming traffic light phases, suggests optimal speed, and provides voice alerts accordingly.")
+    st.markdown("This module simulates a moving car, unsynchronized traffic lights with countdown timers, and provides dynamic speed advice along with voice alerts when the predicted upcoming signal phase changes.")
 
-    # Sidebar controls for simulation parameters (for module 2)
-    initial_speed = st.sidebar.slider("Initial Speed (km/h)", 10, 60, 25, key="sim_initial")
-    max_speed = st.sidebar.slider("Max Speed (km/h)", 10, 60, 60, key="sim_max")
-    min_speed = st.sidebar.slider("Min Speed (km/h)", 10, 60, 10, key="sim_min")
+    # Simulation parameters from sidebar:
+    sim_initial_speed = st.sidebar.slider("Initial Speed (km/h)", 10, 60, 25, key="sim_initial")
+    sim_max_speed = st.sidebar.slider("Max Speed (km/h)", 10, 60, 60, key="sim_max")
+    sim_min_speed = st.sidebar.slider("Min Speed (km/h)", 10, 60, 10, key="sim_min")
     run_sim = st.sidebar.button("▶ Start Simulation (Objective 2)")
 
-    # -----------------------
-    # INITIAL SIMULATION STATE (Objective 2)
-    # -----------------------
-    # Define signal positions (pixels along a simulated road)
+    # ---------------------------------------------------------
+    # INITIAL STATE FOR SIMULATION
+    # ---------------------------------------------------------
+    # Define simulated traffic light positions (in pixels along a horizontal road)
     signal_positions = [150, 350, 550, 750, 950]
     signal_labels = ['B', 'C', 'D', 'E', 'F']
-    signal_states = {}
+    signal_states = {}  # Dictionary: label -> { 'x': position, 'phase': phase, 'timer': timer }
 
     def init_traffic_lights():
         for label, x in zip(signal_labels, signal_positions):
             phase = random.choice(['red', 'green', 'yellow'])
+            # For red and green, use a random timer; yellow is fixed 5 seconds.
             timer = random.randint(10, 45) if phase != 'yellow' else 5
             signal_states[label] = {'x': x, 'phase': phase, 'timer': timer}
     init_traffic_lights()
 
-    car_x = 0
-    car_speed = initial_speed
-    waiting_at = None
+    # Car parameters
+    car_x = 0        # Horizontal position of car (in pixels)
+    car_speed = sim_initial_speed  # current car speed (km/h)
+    waiting_at = None  # if car is waiting at a specific signal label
 
-    # Use session state to smooth advice and store previous predicted phase for voice alert
-    if "prev_predicted_phase" not in st.session_state:
-        st.session_state.prev_predicted_phase = None
-    if "current_advice" not in st.session_state:
-        st.session_state.current_advice = "Maintain"
-        st.session_state.advice_counter = 0
+    # Session state for advice smoothing and voice alert (Objective 2)
+    if "prev_predicted_phase_obj2" not in st.session_state:
+        st.session_state.prev_predicted_phase_obj2 = None
+    if "current_advice_obj2" not in st.session_state:
+        st.session_state.current_advice_obj2 = "Maintain"
+        st.session_state.advice_counter_obj2 = 0
 
-    # Create placeholders for updating the interface
+    # Create placeholders
     info_box = st.empty()
     road_box = st.empty()
 
-    # Run simulation loop when button is pressed
+    # Simulation loop (runs while simulation button is pressed)
     if run_sim:
         while car_x <= 1100:
-            # --- Update signal timers ---
+            # --- Update each traffic light's timer and phase ---
             for sig in signal_states.values():
                 sig['timer'] -= 1
                 if sig['timer'] <= 0:
@@ -82,7 +83,7 @@ if page == "Traffic Light Simulation":
                         sig['phase'] = 'red'
                         sig['timer'] = random.randint(30, 60)
 
-            # --- Find next signal ---
+            # --- Find the upcoming traffic light (the first light ahead of the car) ---
             next_signal = None
             for lbl in signal_labels:
                 if signal_states[lbl]['x'] > car_x:
@@ -104,7 +105,7 @@ if page == "Traffic Light Simulation":
                 else:
                     eta = float('inf')
 
-                # --- Predict phase ---
+                # --- Predict what phase will be encountered when the car reaches the light ---
                 rem = eta
                 phase = current_phase
                 time_left = signal['timer']
@@ -135,38 +136,37 @@ if page == "Traffic Light Simulation":
                     else:
                         predicted_phase = "yellow"
 
-                # --- Suggest speed based on current phase ---
+                # --- Speed suggestion logic based on current phase and distance ---
                 if current_phase == 'red' and distance <= 40:
                     suggestion = 'Slow Down'
                     car_speed = 0
                     waiting_at = next_signal
                 elif current_phase == 'green':
-                    if car_speed < max_speed:
+                    if car_speed < sim_max_speed:
                         suggestion = 'Speed Up'
                         if random.random() < 0.7:
                             car_speed += 5
-                            car_speed = min(car_speed, max_speed)
-                    elif car_speed > min_speed:
+                            car_speed = min(car_speed, sim_max_speed)
+                    elif car_speed > sim_min_speed:
                         suggestion = 'Slow Down'
                         if random.random() < 0.7:
                             car_speed -= 5
-                            car_speed = max(car_speed, min_speed)
+                            car_speed = max(car_speed, sim_min_speed)
 
-            # --- Resume after red ---
+            # --- If waiting at a red signal, resume only when light turns green ---
             if waiting_at and signal_states[waiting_at]['phase'] == 'green':
                 waiting_at = None
                 car_speed = 15
 
-            # --- Update advice smoothing ---
-            if suggestion == st.session_state.current_advice:
-                st.session_state.advice_counter += 1
+            # --- Smooth out the advice: update only when the same suggestion persists ---
+            if suggestion == st.session_state.current_advice_obj2:
+                st.session_state.advice_counter_obj2 += 1
             else:
-                st.session_state.current_advice = suggestion
-                st.session_state.advice_counter = 1
+                st.session_state.current_advice_obj2 = suggestion
+                st.session_state.advice_counter_obj2 = 1
+            stable_suggestion = st.session_state.current_advice_obj2 if st.session_state.advice_counter_obj2 >= 2 else "Maintain"
 
-            stable_suggestion = st.session_state.current_advice if st.session_state.advice_counter >= 2 else "Maintain"
-
-            # --- Move car forward if not waiting ---
+            # --- Move the car forward (only if not waiting) ---
             if car_speed > 0:
                 car_x += car_speed * 0.1
 
@@ -184,8 +184,8 @@ if page == "Traffic Light Simulation":
                 """
             )
 
-            # --- Voice Alert: Trigger only if the predicted phase has changed ---
-            if st.session_state.prev_predicted_phase != predicted_phase:
+            # --- Voice Alert: Only trigger if predicted phase has changed ---
+            if st.session_state.prev_predicted_phase_obj2 != predicted_phase:
                 voice = ""
                 if stable_suggestion == "Speed Up":
                     voice = "Signal is green. You can speed up."
@@ -203,25 +203,25 @@ if page == "Traffic Light Simulation":
                     """,
                     height=0
                 )
-                st.session_state.prev_predicted_phase = predicted_phase
+                st.session_state.prev_predicted_phase_obj2 = predicted_phase
 
             # --- ROAD VISUALIZATION ---
             road_display = ["-"] * 120
             for lbl in signal_labels:
                 pos = int(signal_states[lbl]["x"] / 10)
-                phase = signal_states[lbl]["phase"]
-                if phase == "red":
+                phase_ = signal_states[lbl]["phase"]
+                if phase_ == "red":
                     road_display[pos] = "🟥"
-                elif phase == "green":
+                elif phase_ == "green":
                     road_display[pos] = "🟩"
-                elif phase == "yellow":
+                elif phase_ == "yellow":
                     road_display[pos] = "🟨"
             car_pos_index = int(car_x / 10)
             if 0 <= car_pos_index < len(road_display):
                 road_display[car_pos_index] = "🔵"
-            st.markdown("### 🛣️ Road View")
-            st.code("".join(road_display))
-            
+            road_box.markdown("### 🛣️ Road View")
+            road_box.code("".join(road_display))
+
             # --- Display signal metrics ---
             cols = st.columns(len(signal_labels))
             for i, lbl in enumerate(signal_labels):
@@ -236,19 +236,21 @@ if page == "Traffic Light Simulation":
 ##########################
 elif page == "Traffic Sign Recognition":
     st.header("🚥 Traffic Sign Recognition")
-    st.markdown("Upload an image of a traffic sign to get a prediction.")
+    st.markdown("Upload an image of a traffic sign to see the prediction along with a voice alert.")
 
-    # File uploader for image input
     uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png"])
     if uploaded_file is not None:
         image = Image.open(uploaded_file)
         st.image(image, caption="Uploaded Image", use_column_width=True)
 
-        # Dummy prediction function (replace with your actual model inference)
+        # Session state to store previous prediction (to trigger voice once on change)
+        if "prev_sign_prediction" not in st.session_state:
+            st.session_state.prev_sign_prediction = None
+
+        # Dummy prediction function (replace with your actual model code)
         def dummy_predict(img):
-            # Simulate some delay and random output
-            time.sleep(1)
-            predicted_class = random.choice(["Stop", "Speed Limit 50", "Yield", "No Entry", "Roundabout"])
+            time.sleep(1)  # simulate processing time
+            predicted_class = random.choice(["Stop", "Yield", "Speed Limit 50", "No Entry", "Roundabout"])
             confidence = random.uniform(90, 99)
             return predicted_class, round(confidence, 2)
 
@@ -256,3 +258,18 @@ elif page == "Traffic Sign Recognition":
             with st.spinner("Predicting..."):
                 label, conf = dummy_predict(image)
             st.success(f"Prediction: **{label}** with **{conf}%** confidence")
+
+            # Voice alert only if prediction changed
+            if st.session_state.prev_sign_prediction != label:
+                voice_text = f"The predicted traffic sign is {label}."
+                components.html(
+                    f"""
+                    <script>
+                    var msg = new SpeechSynthesisUtterance("{voice_text}");
+                    window.speechSynthesis.cancel();
+                    window.speechSynthesis.speak(msg);
+                    </script>
+                    """,
+                    height=0
+                )
+                st.session_state.prev_sign_prediction = label
