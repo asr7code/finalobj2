@@ -8,7 +8,9 @@ import math
 st.set_page_config(page_title="Traffic Optimizer – Objective 2", layout="wide")
 st.title("🚦 Traffic Optimizer & Assistant - Objective 2 Simulation")
 st.markdown("""
-This assistant predicts upcoming traffic signal phases, estimates ETA, and gives smart speed suggestions to help a car reduce waiting time at red lights and optimize smooth passage through intersections.
+This simulation intelligently suggests whether a driver should speed up, slow down, or maintain speed
+— with the goal of **minimizing stops at red lights**. The assistant uses ETA and signal prediction to decide
+whether it's still possible to cross the next light during green.
 """)
 
 # -------------------- SIDEBAR --------------------
@@ -111,11 +113,23 @@ if start_sim:
 
             # ---------- SMART SUGGESTION LOGIC ----------
             if predicted == "red":
-                # Too early to stop? Slow down if can't cross in green
-                suggestion = "Slow Down"
-                if driver_follows_suggestion and car_speed > min_speed:
-                    car_speed -= 2
-                    car_speed = max(min_speed, car_speed)
+                time_left_red = sig["timer"]
+                time_after_red = eta - time_left_red
+                if time_after_red > 0 and time_after_red <= 45:
+                    # Try to reach green after red if speed allows
+                    required_speed = (distance / time_after_red) * 10
+                    if required_speed <= max_speed:
+                        suggestion = "Speed Up"
+                        if driver_follows_suggestion and car_speed < max_speed:
+                            car_speed += 2
+                            car_speed = min(max_speed, car_speed)
+                    else:
+                        suggestion = "Maintain"
+                else:
+                    suggestion = "Slow Down"
+                    if driver_follows_suggestion and car_speed > min_speed:
+                        car_speed -= 2
+                        car_speed = max(min_speed, car_speed)
 
             elif predicted == "green":
                 if car_speed < max_speed:
