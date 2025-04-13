@@ -8,9 +8,8 @@ import math
 st.set_page_config(page_title="Traffic Optimizer – Objective 2", layout="wide")
 st.title("🚦 Traffic Optimizer & Assistant - Objective 2 Simulation")
 st.markdown("""
-This simulation intelligently suggests whether a driver should speed up, slow down, or maintain speed
-— with the goal of **minimizing stops at red lights**. The assistant uses ETA and signal prediction to decide
-whether it's still possible to cross the next light during green.
+This simulation uses traffic signal prediction to guide a vehicle's speed with the goal of **minimizing stops**. 
+The system predicts the next light's phase, estimates the car's ETA, and suggests whether to speed up, slow down, or maintain speed based on the prediction.
 """)
 
 # -------------------- SIDEBAR --------------------
@@ -22,7 +21,6 @@ driver_type = st.sidebar.selectbox("Driver Behavior", ["Cautious", "Average", "A
 start_sim = st.sidebar.button("▶ Start Simulation")
 
 # -------------------- DRIVER PROFILE PROBABILITY --------------------
-# Driver behavior probabilities based on selected driver profile
 driver_profiles = {
     "Cautious": 0.9,  # 90% chance to follow advice
     "Average": 0.7,   # 70% chance to follow advice
@@ -131,7 +129,7 @@ if start_sim:
 
             # ---------- SMART SUGGESTION LOGIC ----------
             if predicted == "red":
-                # Calculate if it's possible to reach green
+                # Check if it's possible to reach green
                 time_left_red = sig["timer"]
                 time_after_red = eta - time_left_red
                 if time_after_red > 0 and time_after_red <= 45:
