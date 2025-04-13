@@ -18,7 +18,17 @@ st.sidebar.header("Simulation Controls")
 init_speed = st.sidebar.slider("Initial Speed (km/h)", 10, 60, 25)
 max_speed = st.sidebar.slider("Maximum Speed (km/h)", 10, 60, 60)
 min_speed = st.sidebar.slider("Minimum Speed (km/h)", 10, 60, 10)
+driver_type = st.sidebar.selectbox("Driver Behavior", ["Cautious", "Average", "Aggressive"])
 start_sim = st.sidebar.button("▶ Start Simulation")
+
+# -------------------- DRIVER PROFILE PROBABILITY --------------------
+# Driver behavior probabilities based on selected driver profile
+driver_profiles = {
+    "Cautious": 0.9,  # 90% chance to follow advice
+    "Average": 0.7,   # 70% chance to follow advice
+    "Aggressive": 0.4 # 40% chance to follow advice
+}
+driver_follows_suggestion_prob = driver_profiles[driver_type]
 
 # -------------------- TRAFFIC LIGHT SETUP --------------------
 signal_positions = [150, 350, 550, 750, 950]
@@ -44,10 +54,13 @@ if "prev_prediction" not in st.session_state:
     st.session_state.prev_prediction = None
 if "last_voice_time" not in st.session_state:
     st.session_state.last_voice_time = 0.0
+if "suggestion_history" not in st.session_state:
+    st.session_state.suggestion_history = []
 
 # -------------------- PLACEHOLDERS --------------------
 info_box = st.empty()
 road_box = st.empty()
+suggestion_box = st.empty()
 
 # -------------------- FUNCTIONS --------------------
 def update_signals():
@@ -80,11 +93,16 @@ def predict_phase(signal, eta):
         t -= duration
     return cycle[-1][0]
 
+def calculate_required_speed(distance, time_left):
+    """
+    Calculate the required speed to reach the signal in time based on the remaining time and distance.
+    """
+    return (distance / time_left) * 10  # Convert speed to km/h
+
 # -------------------- SIMULATION LOOP --------------------
 if start_sim:
     while car_pos <= 1100:
         update_signals()
-        driver_follows_suggestion = random.random() < 0.7
 
         # Get next upcoming signal
         next_signal = None
@@ -113,31 +131,31 @@ if start_sim:
 
             # ---------- SMART SUGGESTION LOGIC ----------
             if predicted == "red":
+                # Calculate if it's possible to reach green
                 time_left_red = sig["timer"]
                 time_after_red = eta - time_left_red
                 if time_after_red > 0 and time_after_red <= 45:
-                    # Try to reach green after red if speed allows
-                    required_speed = (distance / time_after_red) * 10
+                    required_speed = calculate_required_speed(distance, time_after_red)
                     if required_speed <= max_speed:
                         suggestion = "Speed Up"
-                        if driver_follows_suggestion and car_speed < max_speed:
+                        if random.random() < driver_follows_suggestion_prob and car_speed < max_speed:
                             car_speed += 2
                             car_speed = min(max_speed, car_speed)
                     else:
                         suggestion = "Maintain"
                 else:
                     suggestion = "Slow Down"
-                    if driver_follows_suggestion and car_speed > min_speed:
+                    if random.random() < driver_follows_suggestion_prob and car_speed > min_speed:
                         car_speed -= 2
                         car_speed = max(min_speed, car_speed)
 
             elif predicted == "green":
                 if car_speed < max_speed:
                     time_left = sig["timer"]
-                    required_speed = (distance / time_left) * 10 if time_left > 0 else float('inf')
+                    required_speed = calculate_required_speed(distance, time_left)
                     if eta <= time_left and required_speed <= max_speed:
                         suggestion = "Speed Up"
-                        if driver_follows_suggestion:
+                        if random.random() < driver_follows_suggestion_prob:
                             car_speed += 2
                             car_speed = min(max_speed, car_speed)
                     else:
@@ -147,7 +165,7 @@ if start_sim:
 
             elif predicted == "yellow":
                 suggestion = "Slow Down"
-                if driver_follows_suggestion and car_speed > min_speed:
+                if random.random() < driver_follows_suggestion_prob and car_speed > min_speed:
                     car_speed -= 2
                     car_speed = max(min_speed, car_speed)
 
@@ -205,9 +223,17 @@ if start_sim:
             - **ETA to Signal:** {eta_str}  
             - **Predicted Phase on Arrival:** {predicted}  
             - **Suggestion:** **{suggestion}**  
-            - **Driver Action:** {"Followed" if driver_follows_suggestion else "Ignored"}
+            - **Driver Action:** {"Followed" if random.random() < driver_follows_suggestion_prob else "Ignored"}
             """
         )
+
+        # ---------- Recent Suggestion History ----------
+        st.session_state.suggestion_history.append(suggestion)
+        if len(st.session_state.suggestion_history) > 3:
+            st.session_state.suggestion_history.pop(0)
+        
+        suggestion_box.markdown("### Recent Suggestions:")
+        suggestion_box.write(" -> ".join(st.session_state.suggestion_history))
 
         # ---------- Road Visualization ----------
         road = ["—"] * 120
