@@ -9,10 +9,6 @@ st.set_page_config(page_title="Traffic Optimizer – Objective 2", layout="wide"
 st.title("🚦 Traffic Optimizer & Assistant - Objective 2 Simulation")
 st.markdown("""
 This assistant predicts upcoming traffic signal phases, estimates ETA, and gives smart speed suggestions to help a car reduce waiting time at red lights and optimize smooth passage through intersections.
-
-🧠 Now includes:
-- Driver may not always follow advice (real-world behavior)
-- Speed up advice only when it's realistically possible
 """)
 
 # -------------------- SIDEBAR --------------------
@@ -86,8 +82,6 @@ def predict_phase(signal, eta):
 if start_sim:
     while car_pos <= 1100:
         update_signals()
-
-        # Simulate driver behavior: 70% chance they follow advice
         driver_follows_suggestion = random.random() < 0.7
 
         # Get next upcoming signal
@@ -107,24 +101,33 @@ if start_sim:
             sig = traffic_lights[next_signal]
             distance = sig["x"] - car_pos
             current_phase = sig["phase"]
-            eta = distance / (car_speed * 0.1) if car_speed > 0 else float('inf')
-            predicted = predict_phase(sig, eta)
+
+            if car_speed > 0:
+                eta = distance / (car_speed * 0.1)
+                predicted = predict_phase(sig, eta)
+            else:
+                eta = float('inf')
+                predicted = current_phase
 
             # ---------- SMART SUGGESTION LOGIC ----------
             if predicted == "red":
+                # Too early to stop? Slow down if can't cross in green
                 suggestion = "Slow Down"
                 if driver_follows_suggestion and car_speed > min_speed:
                     car_speed -= 2
                     car_speed = max(min_speed, car_speed)
 
             elif predicted == "green":
-                time_left = sig["timer"]
-                required_speed = (distance / time_left) * 10 if time_left > 0 else float('inf')
-                if eta <= time_left and required_speed <= max_speed:
-                    suggestion = "Speed Up"
-                    if driver_follows_suggestion and car_speed < max_speed:
-                        car_speed += 2
-                        car_speed = min(max_speed, car_speed)
+                if car_speed < max_speed:
+                    time_left = sig["timer"]
+                    required_speed = (distance / time_left) * 10 if time_left > 0 else float('inf')
+                    if eta <= time_left and required_speed <= max_speed:
+                        suggestion = "Speed Up"
+                        if driver_follows_suggestion:
+                            car_speed += 2
+                            car_speed = min(max_speed, car_speed)
+                    else:
+                        suggestion = "Maintain"
                 else:
                     suggestion = "Maintain"
 
@@ -158,7 +161,7 @@ if start_sim:
             elif suggestion == "Stop":
                 voice_text = "Stopping at red signal."
             elif suggestion == "Maintain":
-                voice_text = "Maintain current speed."
+                voice_text = "Maintain your speed."
             components.html(
                 f"""
                 <script>
@@ -177,7 +180,7 @@ if start_sim:
             car_pos += car_speed * 0.1
 
         # ---------- Display Info ----------
-        eta_str = "N/A" if math.isinf(eta) else f"{int(eta)}s"
+        eta_str = "Waiting" if math.isinf(eta) else f"{int(eta)}s"
         info_box.markdown(
             f"""
             ### 🚘 Vehicle Info  
@@ -204,7 +207,7 @@ if start_sim:
         road_box.markdown("### 🛣️ Road View")
         road_box.code("".join(road))
 
-        # ---------- Signal Metrics ----------
+        # ---------- Signal Timers ----------
         cols = st.columns(len(signal_labels))
         for i, label in enumerate(signal_labels):
             sig = traffic_lights[label]
