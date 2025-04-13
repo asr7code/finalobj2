@@ -4,6 +4,7 @@ import random
 import time
 import math
 from PIL import Image
+import datetime
 
 ##########################
 # PAGE CONFIGURATION
@@ -13,7 +14,7 @@ st.title("Traffic Optimizer & Assistant")
 st.markdown("""
 This project demo has two modules:
 - **Objective 1:** Traffic Sign Recognition (upload image → prediction & voice alert).
-- **Objective 2:** Traffic Light Simulation & Speed Suggestions (simulate a car approaching unsynchronized signals with real-time voice alerts).
+- **Objective 2:** Traffic Light Simulation & Speed Suggestions (simulate a car approaching unsynchronized signals with dynamic voice alerts).
 """)
 
 ##########################
@@ -22,54 +23,64 @@ This project demo has two modules:
 page = st.sidebar.radio("Select Module", ["Traffic Light Simulation", "Traffic Sign Recognition"])
 
 ##########################
+# Helper: Debounce Voice Alert
+##########################
+def should_trigger_voice(last_time, debounce_seconds=5):
+    """Return True if no voice alert was triggered in the past debounce_seconds."""
+    now = datetime.datetime.now()
+    if last_time is None:
+        return True
+    diff = (now - last_time).total_seconds()
+    return diff >= debounce_seconds
+
+##########################
 # OBJECTIVE 2: TRAFFIC LIGHT SIMULATION & SPEED SUGGESTIONS
 ##########################
 if page == "Traffic Light Simulation":
     st.header("🚦 Traffic Light Simulation & Speed Suggestions")
-    st.markdown("This module simulates a moving car, unsynchronized traffic lights with countdown timers, and provides dynamic speed advice along with voice alerts when the predicted upcoming signal phase changes.")
+    st.markdown("This module simulates a car approaching traffic signals with unsynchronized timers, provides speed advice, and triggers voice alerts only when the predicted phase changes and at least 5 seconds have passed since the last alert.")
 
-    # Simulation parameters from sidebar:
+    # Sidebar simulation parameters (for objective 2)
     sim_initial_speed = st.sidebar.slider("Initial Speed (km/h)", 10, 60, 25, key="sim_initial")
     sim_max_speed = st.sidebar.slider("Max Speed (km/h)", 10, 60, 60, key="sim_max")
     sim_min_speed = st.sidebar.slider("Min Speed (km/h)", 10, 60, 10, key="sim_min")
     run_sim = st.sidebar.button("▶ Start Simulation (Objective 2)")
 
-    # ---------------------------------------------------------
-    # INITIAL STATE FOR SIMULATION
-    # ---------------------------------------------------------
-    # Define simulated traffic light positions (in pixels along a horizontal road)
+    # -----------------------
+    # INITIAL SIMULATION STATE
+    # -----------------------
     signal_positions = [150, 350, 550, 750, 950]
     signal_labels = ['B', 'C', 'D', 'E', 'F']
-    signal_states = {}  # Dictionary: label -> { 'x': position, 'phase': phase, 'timer': timer }
+    signal_states = {}
 
     def init_traffic_lights():
         for label, x in zip(signal_labels, signal_positions):
             phase = random.choice(['red', 'green', 'yellow'])
-            # For red and green, use a random timer; yellow is fixed 5 seconds.
             timer = random.randint(10, 45) if phase != 'yellow' else 5
             signal_states[label] = {'x': x, 'phase': phase, 'timer': timer}
     init_traffic_lights()
 
-    # Car parameters
-    car_x = 0        # Horizontal position of car (in pixels)
-    car_speed = sim_initial_speed  # current car speed (km/h)
-    waiting_at = None  # if car is waiting at a specific signal label
+    # Car simulation variables
+    car_x = 0
+    car_speed = sim_initial_speed
+    waiting_at = None
 
-    # Session state for advice smoothing and voice alert (Objective 2)
+    # Session state: for smoothing advice and voice alert timing (Objective 2)
     if "prev_predicted_phase_obj2" not in st.session_state:
         st.session_state.prev_predicted_phase_obj2 = None
     if "current_advice_obj2" not in st.session_state:
         st.session_state.current_advice_obj2 = "Maintain"
         st.session_state.advice_counter_obj2 = 0
+    if "last_voice_time_obj2" not in st.session_state:
+        st.session_state.last_voice_time_obj2 = None
 
-    # Create placeholders
     info_box = st.empty()
     road_box = st.empty()
 
-    # Simulation loop (runs while simulation button is pressed)
+    # Simulation loop
     if run_sim:
         while car_x <= 1100:
-            # --- Update each traffic light's timer and phase ---
+            # --- Update traffic light timers ---
             for sig in signal_states.values():
                 sig['timer'] -= 1
                 if sig['timer'] <= 0:
@@ -83,7 +94,7 @@ if page == "Traffic Light Simulation":
                         sig['phase'] = 'red'
                         sig['timer'] = random.randint(30, 60)
 
-            # --- Find the upcoming traffic light (the first light ahead of the car) ---
+            # --- Determine next signal ---
             next_signal = None
             for lbl in signal_labels:
                 if signal_states[lbl]['x'] > car_x:
@@ -104,8 +115,8 @@ if page == "Traffic Light Simulation":
                     eta = distance / (car_speed * 0.1)
                 else:
                     eta = float('inf')
-
-                # --- Predict what phase will be encountered when the car reaches the light ---
+                
+                # --- Predict phase ---
                 rem = eta
                 phase = current_phase
                 time_left = signal['timer']
@@ -135,8 +146,8 @@ if page == "Traffic Light Simulation":
                         predicted_phase = "green"
                     else:
                         predicted_phase = "yellow"
-
-                # --- Speed suggestion logic based on current phase and distance ---
+                
+                # --- Speed suggestion logic ---
                 if current_phase == 'red' and distance <= 40:
                     suggestion = 'Slow Down'
                     car_speed = 0
@@ -152,13 +163,13 @@ if page == "Traffic Light Simulation":
                         if random.random() < 0.7:
                             car_speed -= 5
                             car_speed = max(car_speed, sim_min_speed)
-
-            # --- If waiting at a red signal, resume only when light turns green ---
+            
+            # --- Resume after red ---
             if waiting_at and signal_states[waiting_at]['phase'] == 'green':
                 waiting_at = None
                 car_speed = 15
-
-            # --- Smooth out the advice: update only when the same suggestion persists ---
+            
+            # --- Smoothing advice ---
             if suggestion == st.session_state.current_advice_obj2:
                 st.session_state.advice_counter_obj2 += 1
             else:
@@ -166,7 +177,7 @@ if page == "Traffic Light Simulation":
                 st.session_state.advice_counter_obj2 = 1
             stable_suggestion = st.session_state.current_advice_obj2 if st.session_state.advice_counter_obj2 >= 2 else "Maintain"
 
-            # --- Move the car forward (only if not waiting) ---
+            # --- Move car forward if not waiting ---
             if car_speed > 0:
                 car_x += car_speed * 0.1
 
@@ -184,8 +195,8 @@ if page == "Traffic Light Simulation":
                 """
             )
 
-            # --- Voice Alert: Only trigger if predicted phase has changed ---
-            if st.session_state.prev_predicted_phase_obj2 != predicted_phase:
+            # --- Voice Alert: Trigger only when predicted phase changes and debounce 5 sec ---
+            if st.session_state.prev_predicted_phase_obj2 != predicted_phase and should_trigger_voice(st.session_state.last_voice_time_obj2, 5):
                 voice = ""
                 if stable_suggestion == "Speed Up":
                     voice = "Signal is green. You can speed up."
@@ -204,6 +215,7 @@ if page == "Traffic Light Simulation":
                     height=0
                 )
                 st.session_state.prev_predicted_phase_obj2 = predicted_phase
+                st.session_state.last_voice_time_obj2 = datetime.datetime.now()
 
             # --- ROAD VISUALIZATION ---
             road_display = ["-"] * 120
@@ -221,14 +233,14 @@ if page == "Traffic Light Simulation":
                 road_display[car_pos_index] = "🔵"
             road_box.markdown("### 🛣️ Road View")
             road_box.code("".join(road_display))
-
-            # --- Display signal metrics ---
+            
+            # --- Signal Metrics Display ---
             cols = st.columns(len(signal_labels))
             for i, lbl in enumerate(signal_labels):
                 sig = signal_states[lbl]
                 with cols[i]:
                     st.metric(label=f"Signal {lbl}", value=sig['phase'].capitalize(), delta=f"{sig['timer']}s")
-
+            
             time.sleep(1)
 
 ##########################
@@ -236,20 +248,20 @@ if page == "Traffic Light Simulation":
 ##########################
 elif page == "Traffic Sign Recognition":
     st.header("🚥 Traffic Sign Recognition")
-    st.markdown("Upload an image of a traffic sign to see the prediction along with a voice alert.")
+    st.markdown("Upload an image of a traffic sign to see the prediction along with voice alert.")
 
     uploaded_file = st.file_uploader("Choose an image...", type=["jpg", "jpeg", "png"])
     if uploaded_file is not None:
         image = Image.open(uploaded_file)
         st.image(image, caption="Uploaded Image", use_column_width=True)
-
-        # Session state to store previous prediction (to trigger voice once on change)
+        
+        # Session state for previous prediction in Objective 1
         if "prev_sign_prediction" not in st.session_state:
             st.session_state.prev_sign_prediction = None
 
-        # Dummy prediction function (replace with your actual model code)
+        # Dummy prediction function (replace with your model later)
         def dummy_predict(img):
-            time.sleep(1)  # simulate processing time
+            time.sleep(1)  # simulate model processing
             predicted_class = random.choice(["Stop", "Yield", "Speed Limit 50", "No Entry", "Roundabout"])
             confidence = random.uniform(90, 99)
             return predicted_class, round(confidence, 2)
@@ -258,8 +270,8 @@ elif page == "Traffic Sign Recognition":
             with st.spinner("Predicting..."):
                 label, conf = dummy_predict(image)
             st.success(f"Prediction: **{label}** with **{conf}%** confidence")
-
-            # Voice alert only if prediction changed
+            
+            # Voice alert in Objective 1: trigger only if prediction changes
             if st.session_state.prev_sign_prediction != label:
                 voice_text = f"The predicted traffic sign is {label}."
                 components.html(
